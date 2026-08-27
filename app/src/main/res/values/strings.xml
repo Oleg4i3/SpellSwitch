@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">SpellSwitch</string>
+    <string name="accessibility_service_description">Показывает плавающий переключатель языка проверки орфографии (RU/UK/EN).</string>
+</resources>
