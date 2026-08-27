@@ -1,28 +1,29 @@
 package com.spellswitch;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.provider.Settings;
 import android.view.textservice.SpellCheckerInfo;
 import android.view.textservice.SpellCheckerSubtype;
 import android.view.textservice.TextServicesManager;
 
 /**
- * Читает/переключает язык системной службы проверки орфографии.
+ * Переключает язык системной службы проверки орфографии.
  *
- * Ключ "selected_spell_checker_subtype" — это скрытая (@hide) настройка
- * Settings.Secure, поэтому её нет как публичной Java-константы в android.jar,
- * и мы обращаемся к ней по строковому имени напрямую. Запись требует
- * android.permission.WRITE_SECURE_SETTINGS, выданного через:
+ * Ключ "selected_spell_checker_subtype" — скрытая (@hide) настройка
+ * Settings.Secure, публичной Java-константы для неё нет, поэтому обращаемся
+ * по строковому имени напрямую. Запись требует android.permission.WRITE_SECURE_SETTINGS:
  *   adb shell pm grant com.spellswitch android.permission.WRITE_SECURE_SETTINGS
  *
- * NB: методы TextServicesManager.getCurrentSpellCheckerInfo() /
- * getCurrentSpellCheckerSubtype(boolean) и SpellCheckerInfo.getSubtypeAt(int) /
- * getSubtypeCount() — это стандартный публичный API этого класса, но точные
- * сигнатуры не сверялись построчно с официальным javadoc в этой сессии.
- * Если название неверное, это сразу и однозначно всплывёт как ошибка
- * компиляции в логе GitHub Actions ("cannot find symbol") — а не как скрытый
- * баг в рантайме, так что если сборка упадёт именно здесь — присылай лог,
- * поправим по точному сообщению компилятора.
+ * TextServicesManager.getCurrentSpellCheckerSubtype(boolean) — метод, который
+ * должен был бы отдавать "текущий выбранный язык" — в реальности удалён из
+ * публичного API (подтверждено логом сборки + апстрим-коммитом CTS-тестов,
+ * переименовавшим/убравшим часть методов этого класса). Поэтому текущий язык
+ * мы не спрашиваем у системы, а храним сами: раз это единственный компонент,
+ * который его меняет, наша копия в SharedPreferences и есть источник истины.
+ * Единственный побочный эффект — если язык поменяли не через это приложение
+ * (вручную в системных настройках), наш счётчик разойдётся с реальным до
+ * следующего переключения — это не страшно для сценария личного шортката.
  */
 public class SpellCheckerSwitcher {
 
@@ -30,25 +31,16 @@ public class SpellCheckerSwitcher {
     private static final String[] LABELS = {"RU", "UK", "EN"};
     public static final String[] MENU_LABELS = {"Русский", "Українська", "English"};
 
+    private static final String PREFS_NAME = "spellswitch_prefs";
+    private static final String KEY_LANG_INDEX = "current_lang_index";
+
     public static String currentLanguageLabel(Context context) {
-        String locale = currentLocale(context);
-        for (int i = 0; i < LANGS.length; i++) {
-            if (LANGS[i].equals(locale)) return LABELS[i];
-        }
-        return locale != null ? locale.toUpperCase() : "?";
+        return LABELS[currentIndex(context)];
     }
 
     public static void cycleNext(Context context) {
-        String current = currentLocale(context);
-        int idx = -1;
-        for (int i = 0; i < LANGS.length; i++) {
-            if (LANGS[i].equals(current)) {
-                idx = i;
-                break;
-            }
-        }
-        String next = LANGS[(idx + 1) % LANGS.length];
-        setLanguage(context, next);
+        int nextIndex = (currentIndex(context) + 1) % LANGS.length;
+        setLanguage(context, LANGS[nextIndex]);
     }
 
     public static void setLanguage(Context context, String langTag) {
@@ -65,21 +57,28 @@ public class SpellCheckerSwitcher {
             if (locale != null && locale.toLowerCase().startsWith(langTag)) {
                 Settings.Secure.putInt(context.getContentResolver(),
                         "selected_spell_checker_subtype", subtype.hashCode());
+                saveIndex(context, indexOf(langTag));
                 return;
             }
         }
     }
 
-    private static String currentLocale(Context context) {
-        TextServicesManager tsm = (TextServicesManager)
-                context.getSystemService(Context.TEXT_SERVICES_MANAGER_SERVICE);
-        if (tsm == null) return null;
+    private static int indexOf(String langTag) {
+        for (int i = 0; i < LANGS.length; i++) {
+            if (LANGS[i].equals(langTag)) return i;
+        }
+        return 0;
+    }
 
-        SpellCheckerSubtype subtype = tsm.getCurrentSpellCheckerSubtype(true);
-        if (subtype == null) return null;
+    private static int currentIndex(Context context) {
+        return prefs(context).getInt(KEY_LANG_INDEX, 0);
+    }
 
-        String locale = subtype.getLocale();
-        if (locale == null || locale.isEmpty()) return null;
-        return locale.length() >= 2 ? locale.substring(0, 2).toLowerCase() : locale.toLowerCase();
+    private static void saveIndex(Context context, int index) {
+        prefs(context).edit().putInt(KEY_LANG_INDEX, index).apply();
+    }
+
+    private static SharedPreferences prefs(Context context) {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
     }
 }
