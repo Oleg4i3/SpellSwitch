@@ -1,11 +1,16 @@
 package com.spellswitch;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.GestureDescription;
 import android.annotation.SuppressLint;
 import android.app.AlertDialog;
+import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.Path;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -13,6 +18,8 @@ import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.InputMethodSubtype;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -116,14 +123,73 @@ public class OverlayAccessibilityService extends AccessibilityService {
     private void cycleLanguage() {
         SpellCheckerSwitcher.cycleNext(this);
         overlayView.setText(SpellCheckerSwitcher.currentLanguageLabel(this));
+
+        if (isTapThroughEnabled()) {
+            dispatchTapThrough();
+        }
+    }
+
+    /**
+     * Синтетический тап ровно в то место экрана, где сейчас лежит оверлей —
+     * если пользователь заранее перетащил индикатор точно на кнопку
+     * переключения раскладки JBak2, этот тап попадёт на неё. Требует
+     * android:canPerformGestures="true" в конфиге сервиса.
+     *
+     * dispatchGesture() — задокументированный публичный API AccessibilityService
+     * с API 24, тот же механизм, которым пользуются инструменты автоматизации
+     * экрана. Прячем оверлей на короткое время перед тапом, иначе синтетический
+     * тап попадёт на само наше окно (оно и так лежит поверх всего остального).
+     */
+    private void dispatchTapThrough() {
+        int[] loc = new int[2];
+        overlayView.getLocationOnScreen(loc);
+        float x = loc[0] + overlayView.getWidth() / 2f;
+        float y = loc[1] + overlayView.getHeight() / 2f;
+
+        overlayView.setVisibility(View.INVISIBLE);
+
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            Path path = new Path();
+            path.moveTo(x, y);
+            GestureDescription.StrokeDescription stroke =
+                    new GestureDescription.StrokeDescription(path, 0, 60);
+            GestureDescription gesture = new GestureDescription.Builder()
+                    .addStroke(stroke)
+                    .build();
+
+            dispatchGesture(gesture, new GestureResultCallback() {
+                @Override
+                public void onCompleted(GestureDescription gestureDescription) {
+                    overlayView.setVisibility(View.VISIBLE);
+                }
+
+                @Override
+                public void onCancelled(GestureDescription gestureDescription) {
+                    overlayView.setVisibility(View.VISIBLE);
+                }
+            }, null);
+        }, 60);
+    }
+
+    private boolean isTapThroughEnabled() {
+        return getSharedPreferences("spellswitch_prefs", MODE_PRIVATE)
+                .getBoolean("tap_through_enabled", false);
+    }
+
+    private void setTapThroughEnabled(boolean enabled) {
+        getSharedPreferences("spellswitch_prefs", MODE_PRIVATE)
+                .edit().putBoolean("tap_through_enabled", enabled).apply();
     }
 
     private void showLanguageMenu() {
+        boolean tapThroughOn = isTapThroughEnabled();
         String[] items = {
                 SpellCheckerSwitcher.MENU_LABELS[0],
                 SpellCheckerSwitcher.MENU_LABELS[1],
                 SpellCheckerSwitcher.MENU_LABELS[2],
-                "Диагностика клавиатуры (IME tree)"
+                "Диагностика клавиатуры (IME tree)",
+                "Проверить getCurrentInputMethodSubtype()",
+                "Синхро-тап по раскладке: " + (tapThroughOn ? "ВКЛ (нажмите, чтобы выключить)" : "ВЫКЛ (нажмите, чтобы включить)")
         };
 
         AlertDialog dialog = new AlertDialog.Builder(this)
@@ -132,10 +198,44 @@ public class OverlayAccessibilityService extends AccessibilityService {
                     if (which < SpellCheckerSwitcher.LANGS.length) {
                         SpellCheckerSwitcher.setLanguage(this, SpellCheckerSwitcher.LANGS[which]);
                         overlayView.setText(SpellCheckerSwitcher.currentLanguageLabel(this));
-                    } else {
+                    } else if (which == 3) {
                         showImeDump();
+                    } else if (which == 4) {
+                        showImeSubtypeCheck();
+                    } else {
+                        setTapThroughEnabled(!tapThroughOn);
                     }
                 })
+                .create();
+
+        showAsOverlay(dialog);
+    }
+
+    private void showImeSubtypeCheck() {
+        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        String result;
+        if (imm == null) {
+            result = "InputMethodManager недоступен";
+        } else {
+            InputMethodSubtype subtype = imm.getCurrentInputMethodSubtype();
+            result = subtype == null
+                    ? "getCurrentInputMethodSubtype() вернул null — JBak2, похоже, "
+                        + "не регистрирует свои языки как системные InputMethodSubtype."
+                    : "locale=" + subtype.getLocale()
+                        + "\nmode=" + subtype.getMode()
+                        + "\nlanguageTag=" + subtype.getLanguageTag()
+                        + "\nextraValue=" + subtype.getExtraValue();
+        }
+
+        TextView textView = new TextView(this);
+        textView.setText(result);
+        textView.setTextIsSelectable(true);
+        textView.setPadding(24, 24, 24, 24);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("getCurrentInputMethodSubtype()")
+                .setView(textView)
+                .setPositiveButton("Закрыть", null)
                 .create();
 
         showAsOverlay(dialog);
