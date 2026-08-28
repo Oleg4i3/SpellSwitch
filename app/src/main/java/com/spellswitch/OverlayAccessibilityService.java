@@ -8,7 +8,6 @@ import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
-import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
@@ -16,11 +15,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
-import android.view.inputmethod.InputMethodManager;
-import android.view.inputmethod.InputMethodSubtype;
-import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.util.List;
@@ -33,13 +28,21 @@ import java.util.List;
  */
 public class OverlayAccessibilityService extends AccessibilityService {
 
+    static final String PREFS_NAME = "spellswitch_prefs";
+    static final String KEY_TAP_THROUGH = "tap_through_enabled";
+    static final String KEY_ALPHA_PERCENT = "overlay_alpha_percent";
+    static final String KEY_OVERLAY_X = "overlay_x";
+    static final String KEY_OVERLAY_Y = "overlay_y";
+
     private static final int LONG_PRESS_MS = 500;
     private static final int DRAG_SLOP_PX = 12;
+    private static final int DEFAULT_ALPHA_PERCENT = 80;
 
     private WindowManager windowManager;
     private TextView overlayView;
     private WindowManager.LayoutParams layoutParams;
     private boolean overlayAdded;
+    private SharedPreferences.OnSharedPreferenceChangeListener prefsListener;
 
     private float touchStartX;
     private float touchStartY;
@@ -52,6 +55,7 @@ public class OverlayAccessibilityService extends AccessibilityService {
     protected void onServiceConnected() {
         super.onServiceConnected();
         prepareOverlay();
+        registerPrefsListener();
         updateOverlayVisibility();
     }
 
@@ -62,9 +66,10 @@ public class OverlayAccessibilityService extends AccessibilityService {
         overlayView = new TextView(this);
         overlayView.setText(SpellCheckerSwitcher.currentLanguageLabel(this));
         overlayView.setTextColor(Color.WHITE);
-        overlayView.setBackgroundColor(Color.parseColor("#CC1565C0"));
+        overlayView.setBackgroundColor(Color.parseColor("#1565C0"));
         overlayView.setPadding(28, 20, 28, 20);
         overlayView.setTextSize(14);
+        applyAlpha();
 
         layoutParams = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -79,10 +84,25 @@ public class OverlayAccessibilityService extends AccessibilityService {
         overlayView.setOnTouchListener(this::onOverlayTouch);
     }
 
+    private void registerPrefsListener() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        prefsListener = (sp, key) -> {
+            if (KEY_ALPHA_PERCENT.equals(key)) {
+                applyAlpha();
+            }
+        };
+        prefs.registerOnSharedPreferenceChangeListener(prefsListener);
+    }
+
+    private void applyAlpha() {
+        int percent = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getInt(KEY_ALPHA_PERCENT, DEFAULT_ALPHA_PERCENT);
+        overlayView.setAlpha(percent / 100f);
+    }
+
     /**
      * Показывает/прячет оверлей в зависимости от того, есть ли сейчас среди
      * окон экрана окно с типом TYPE_INPUT_METHOD (то есть открыта клавиатура).
-     * Вызывается при каждом относящемся к окнам accessibility-событии.
      */
     private void updateOverlayVisibility() {
         boolean keyboardVisible = isKeyboardVisible();
@@ -108,16 +128,16 @@ public class OverlayAccessibilityService extends AccessibilityService {
     }
 
     private void loadSavedPosition() {
-        SharedPreferences prefs = getSharedPreferences("spellswitch_prefs", MODE_PRIVATE);
-        layoutParams.x = prefs.getInt("overlay_x", 40);
-        layoutParams.y = prefs.getInt("overlay_y", 200);
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        layoutParams.x = prefs.getInt(KEY_OVERLAY_X, 40);
+        layoutParams.y = prefs.getInt(KEY_OVERLAY_Y, 200);
     }
 
     private void savePosition() {
-        getSharedPreferences("spellswitch_prefs", MODE_PRIVATE)
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit()
-                .putInt("overlay_x", layoutParams.x)
-                .putInt("overlay_y", layoutParams.y)
+                .putInt(KEY_OVERLAY_X, layoutParams.x)
+                .putInt(KEY_OVERLAY_Y, layoutParams.y)
                 .apply();
     }
 
@@ -150,12 +170,10 @@ public class OverlayAccessibilityService extends AccessibilityService {
                 long heldMs = System.currentTimeMillis() - touchDownTime;
                 if (isDragging) {
                     savePosition();
+                } else if (heldMs >= LONG_PRESS_MS) {
+                    showLanguageMenu();
                 } else {
-                    if (heldMs >= LONG_PRESS_MS) {
-                        showLanguageMenu();
-                    } else {
-                        cycleLanguage();
-                    }
+                    cycleLanguage();
                 }
                 return true;
             }
@@ -174,14 +192,9 @@ public class OverlayAccessibilityService extends AccessibilityService {
 
     /**
      * Синтетический тап ровно в то место экрана, где сейчас лежит оверлей —
-     * если пользователь заранее перетащил индикатор точно на кнопку
-     * переключения раскладки JBak2, этот тап попадёт на неё. Требует
-     * android:canPerformGestures="true" в конфиге сервиса.
-     *
-     * dispatchGesture() — задокументированный публичный API AccessibilityService
-     * с API 24, тот же механизм, которым пользуются инструменты автоматизации
-     * экрана. Прячем оверлей на короткое время перед тапом, иначе синтетический
-     * тап попадёт на само наше окно (оно и так лежит поверх всего остального).
+     * если он откалиброван на кнопку переключения раскладки JBak2, этот тап
+     * попадёт на неё. Требует android:canPerformGestures="true" в конфиге
+     * сервиса. dispatchGesture() — публичный API AccessibilityService с API 24.
      */
     private void dispatchTapThrough() {
         int[] loc = new int[2];
@@ -189,6 +202,7 @@ public class OverlayAccessibilityService extends AccessibilityService {
         float x = loc[0] + overlayView.getWidth() / 2f;
         float y = loc[1] + overlayView.getHeight() / 2f;
 
+        float savedAlpha = overlayView.getAlpha();
         overlayView.setVisibility(View.INVISIBLE);
 
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
@@ -203,11 +217,13 @@ public class OverlayAccessibilityService extends AccessibilityService {
             dispatchGesture(gesture, new GestureResultCallback() {
                 @Override
                 public void onCompleted(GestureDescription gestureDescription) {
+                    overlayView.setAlpha(savedAlpha);
                     overlayView.setVisibility(View.VISIBLE);
                 }
 
                 @Override
                 public void onCancelled(GestureDescription gestureDescription) {
+                    overlayView.setAlpha(savedAlpha);
                     overlayView.setVisibility(View.VISIBLE);
                 }
             }, null);
@@ -215,36 +231,32 @@ public class OverlayAccessibilityService extends AccessibilityService {
     }
 
     private boolean isTapThroughEnabled() {
-        return getSharedPreferences("spellswitch_prefs", MODE_PRIVATE)
-                .getBoolean("tap_through_enabled", false);
+        return getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getBoolean(KEY_TAP_THROUGH, true);
     }
 
     private void setTapThroughEnabled(boolean enabled) {
-        getSharedPreferences("spellswitch_prefs", MODE_PRIVATE)
-                .edit().putBoolean("tap_through_enabled", enabled).apply();
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().putBoolean(KEY_TAP_THROUGH, enabled).apply();
     }
 
     private void showLanguageMenu() {
         boolean tapThroughOn = isTapThroughEnabled();
-        String[] items = {
-                SpellCheckerSwitcher.MENU_LABELS[0],
-                SpellCheckerSwitcher.MENU_LABELS[1],
-                SpellCheckerSwitcher.MENU_LABELS[2],
-                "Диагностика клавиатуры (IME tree)",
-                "Проверить getCurrentInputMethodSubtype()",
-                "Синхро-тап по раскладке: " + (tapThroughOn ? "ВКЛ (нажмите, чтобы выключить)" : "ВЫКЛ (нажмите, чтобы включить)")
-        };
+        String[] order = SpellCheckerSwitcher.getOrder(this);
+
+        String[] items = new String[order.length + 1];
+        for (int i = 0; i < order.length; i++) {
+            items[i] = SpellCheckerSwitcher.menuNameFor(order[i]);
+        }
+        items[order.length] = "Синхро-тап по раскладке: "
+                + (tapThroughOn ? "ВКЛ (нажмите, чтобы выключить)" : "ВЫКЛ (нажмите, чтобы включить)");
 
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(getString(R.string.app_name))
                 .setItems(items, (d, which) -> {
-                    if (which < SpellCheckerSwitcher.LANGS.length) {
-                        SpellCheckerSwitcher.setLanguage(this, SpellCheckerSwitcher.LANGS[which]);
+                    if (which < order.length) {
+                        SpellCheckerSwitcher.setLanguage(this, order[which]);
                         overlayView.setText(SpellCheckerSwitcher.currentLanguageLabel(this));
-                    } else if (which == 3) {
-                        showImeDump();
-                    } else if (which == 4) {
-                        showImeSubtypeCheck();
                     } else {
                         setTapThroughEnabled(!tapThroughOn);
                     }
@@ -252,117 +264,6 @@ public class OverlayAccessibilityService extends AccessibilityService {
                 .create();
 
         showAsOverlay(dialog);
-    }
-
-    private void showImeSubtypeCheck() {
-        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
-        String result;
-        if (imm == null) {
-            result = "InputMethodManager недоступен";
-        } else {
-            InputMethodSubtype subtype = imm.getCurrentInputMethodSubtype();
-            result = subtype == null
-                    ? "getCurrentInputMethodSubtype() вернул null — JBak2, похоже, "
-                        + "не регистрирует свои языки как системные InputMethodSubtype."
-                    : "locale=" + subtype.getLocale()
-                        + "\nmode=" + subtype.getMode()
-                        + "\nlanguageTag=" + subtype.getLanguageTag()
-                        + "\nextraValue=" + subtype.getExtraValue();
-        }
-
-        TextView textView = new TextView(this);
-        textView.setText(result);
-        textView.setTextIsSelectable(true);
-        textView.setPadding(24, 24, 24, 24);
-
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("getCurrentInputMethodSubtype()")
-                .setView(textView)
-                .setPositiveButton("Закрыть", null)
-                .create();
-
-        showAsOverlay(dialog);
-    }
-
-    /**
-     * Диагностика: показывает дерево accessibility-узлов текущего окна
-     * клавиатуры (TYPE_INPUT_METHOD) — текст, contentDescription и координаты
-     * каждого узла. Нужно, чтобы понять, виден ли вообще индикатор языка
-     * JBak2 для accessibility API, и если да — как его отличить от прочих
-     * узлов (по тексту/позиции).
-     */
-    private void showImeDump() {
-        String dump = buildImeDump();
-
-        TextView textView = new TextView(this);
-        textView.setText(dump);
-        textView.setTextIsSelectable(true);
-        textView.setTextSize(11);
-        textView.setPadding(24, 24, 24, 24);
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(textView);
-
-        AlertDialog dialog = new AlertDialog.Builder(this)
-                .setTitle("IME accessibility tree")
-                .setView(scroll)
-                .setPositiveButton("Закрыть", null)
-                .create();
-
-        showAsOverlay(dialog);
-    }
-
-    private String buildImeDump() {
-        List<AccessibilityWindowInfo> windows = getWindows();
-        if (windows == null || windows.isEmpty()) {
-            return "getWindows() вернул пусто. Открыта ли клавиатура прямо сейчас?";
-        }
-
-        StringBuilder sb = new StringBuilder();
-        boolean foundIme = false;
-
-        for (AccessibilityWindowInfo window : windows) {
-            if (window.getType() != AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue;
-            foundIme = true;
-
-            AccessibilityNodeInfo root = window.getRoot();
-            if (root == null) {
-                sb.append("Окно TYPE_INPUT_METHOD найдено, но root == null "
-                        + "(вероятно, canRetrieveWindowContent/flags не сработали).\n");
-            } else {
-                dumpNode(root, 0, sb);
-            }
-        }
-
-        if (!foundIme) {
-            sb.append("Окно с типом TYPE_INPUT_METHOD не найдено среди ")
-                    .append(windows.size())
-                    .append(" окон. Список типов: ");
-            for (AccessibilityWindowInfo w : windows) {
-                sb.append(w.getType()).append(" ");
-            }
-        }
-
-        return sb.length() == 0 ? "(пусто)" : sb.toString();
-    }
-
-    private void dumpNode(AccessibilityNodeInfo node, int depth, StringBuilder sb) {
-        if (node == null) return;
-
-        Rect bounds = new Rect();
-        node.getBoundsInScreen(bounds);
-
-        for (int i = 0; i < depth; i++) sb.append("  ");
-        sb.append(node.getClassName())
-                .append(" text=\"").append(node.getText()).append("\"")
-                .append(" desc=\"").append(node.getContentDescription()).append("\"")
-                .append(" bounds=").append(bounds)
-                .append("\n");
-
-        int childCount = node.getChildCount();
-        for (int i = 0; i < childCount; i++) {
-            dumpNode(node.getChild(i), depth + 1, sb);
-        }
     }
 
     private void showAsOverlay(AlertDialog dialog) {
@@ -379,5 +280,14 @@ public class OverlayAccessibilityService extends AccessibilityService {
 
     @Override
     public void onInterrupt() {
+    }
+
+    @Override
+    public boolean onUnbind(android.content.Intent intent) {
+        if (prefsListener != null) {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .unregisterOnSharedPreferenceChangeListener(prefsListener);
+        }
+        return super.onUnbind(intent);
     }
 }
