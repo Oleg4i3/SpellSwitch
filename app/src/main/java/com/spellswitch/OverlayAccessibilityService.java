@@ -5,12 +5,18 @@ import android.annotation.SuppressLint;
 import android.app.AlertDialog;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
+import android.widget.ScrollView;
 import android.widget.TextView;
+
+import java.util.List;
 
 /**
  * Сервис нужен здесь не ради его "специальных возможностей" в обычном смысле,
@@ -113,14 +119,110 @@ public class OverlayAccessibilityService extends AccessibilityService {
     }
 
     private void showLanguageMenu() {
+        String[] items = {
+                SpellCheckerSwitcher.MENU_LABELS[0],
+                SpellCheckerSwitcher.MENU_LABELS[1],
+                SpellCheckerSwitcher.MENU_LABELS[2],
+                "Диагностика клавиатуры (IME tree)"
+        };
+
         AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(getString(R.string.app_name))
-                .setItems(SpellCheckerSwitcher.MENU_LABELS, (d, which) -> {
-                    SpellCheckerSwitcher.setLanguage(this, SpellCheckerSwitcher.LANGS[which]);
-                    overlayView.setText(SpellCheckerSwitcher.currentLanguageLabel(this));
+                .setItems(items, (d, which) -> {
+                    if (which < SpellCheckerSwitcher.LANGS.length) {
+                        SpellCheckerSwitcher.setLanguage(this, SpellCheckerSwitcher.LANGS[which]);
+                        overlayView.setText(SpellCheckerSwitcher.currentLanguageLabel(this));
+                    } else {
+                        showImeDump();
+                    }
                 })
                 .create();
 
+        showAsOverlay(dialog);
+    }
+
+    /**
+     * Диагностика: показывает дерево accessibility-узлов текущего окна
+     * клавиатуры (TYPE_INPUT_METHOD) — текст, contentDescription и координаты
+     * каждого узла. Нужно, чтобы понять, виден ли вообще индикатор языка
+     * JBak2 для accessibility API, и если да — как его отличить от прочих
+     * узлов (по тексту/позиции).
+     */
+    private void showImeDump() {
+        String dump = buildImeDump();
+
+        TextView textView = new TextView(this);
+        textView.setText(dump);
+        textView.setTextIsSelectable(true);
+        textView.setTextSize(11);
+        textView.setPadding(24, 24, 24, 24);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(textView);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("IME accessibility tree")
+                .setView(scroll)
+                .setPositiveButton("Закрыть", null)
+                .create();
+
+        showAsOverlay(dialog);
+    }
+
+    private String buildImeDump() {
+        List<AccessibilityWindowInfo> windows = getWindows();
+        if (windows == null || windows.isEmpty()) {
+            return "getWindows() вернул пусто. Открыта ли клавиатура прямо сейчас?";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        boolean foundIme = false;
+
+        for (AccessibilityWindowInfo window : windows) {
+            if (window.getType() != AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue;
+            foundIme = true;
+
+            AccessibilityNodeInfo root = window.getRoot();
+            if (root == null) {
+                sb.append("Окно TYPE_INPUT_METHOD найдено, но root == null "
+                        + "(вероятно, canRetrieveWindowContent/flags не сработали).\n");
+            } else {
+                dumpNode(root, 0, sb);
+            }
+        }
+
+        if (!foundIme) {
+            sb.append("Окно с типом TYPE_INPUT_METHOD не найдено среди ")
+                    .append(windows.size())
+                    .append(" окон. Список типов: ");
+            for (AccessibilityWindowInfo w : windows) {
+                sb.append(w.getType()).append(" ");
+            }
+        }
+
+        return sb.length() == 0 ? "(пусто)" : sb.toString();
+    }
+
+    private void dumpNode(AccessibilityNodeInfo node, int depth, StringBuilder sb) {
+        if (node == null) return;
+
+        Rect bounds = new Rect();
+        node.getBoundsInScreen(bounds);
+
+        for (int i = 0; i < depth; i++) sb.append("  ");
+        sb.append(node.getClassName())
+                .append(" text=\"").append(node.getText()).append("\"")
+                .append(" desc=\"").append(node.getContentDescription()).append("\"")
+                .append(" bounds=").append(bounds)
+                .append("\n");
+
+        int childCount = node.getChildCount();
+        for (int i = 0; i < childCount; i++) {
+            dumpNode(node.getChild(i), depth + 1, sb);
+        }
+    }
+
+    private void showAsOverlay(AlertDialog dialog) {
         // Диалог из Service/AccessibilityService не имеет своего Activity-окна,
         // поэтому тип окна нужно выставить вручную — тем же типом, что и оверлей.
         dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY);
