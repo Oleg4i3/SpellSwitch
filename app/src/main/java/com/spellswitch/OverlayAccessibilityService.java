@@ -39,6 +39,7 @@ public class OverlayAccessibilityService extends AccessibilityService {
     private WindowManager windowManager;
     private TextView overlayView;
     private WindowManager.LayoutParams layoutParams;
+    private boolean overlayAdded;
 
     private float touchStartX;
     private float touchStartY;
@@ -50,11 +51,12 @@ public class OverlayAccessibilityService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
-        showOverlay();
+        prepareOverlay();
+        updateOverlayVisibility();
     }
 
     @SuppressLint("ClickableViewAccessibility")
-    private void showOverlay() {
+    private void prepareOverlay() {
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
 
         overlayView = new TextView(this);
@@ -72,12 +74,51 @@ public class OverlayAccessibilityService extends AccessibilityService {
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT);
         layoutParams.gravity = Gravity.TOP | Gravity.START;
-        layoutParams.x = 40;
-        layoutParams.y = 200;
+        loadSavedPosition();
 
         overlayView.setOnTouchListener(this::onOverlayTouch);
+    }
 
-        windowManager.addView(overlayView, layoutParams);
+    /**
+     * Показывает/прячет оверлей в зависимости от того, есть ли сейчас среди
+     * окон экрана окно с типом TYPE_INPUT_METHOD (то есть открыта клавиатура).
+     * Вызывается при каждом относящемся к окнам accessibility-событии.
+     */
+    private void updateOverlayVisibility() {
+        boolean keyboardVisible = isKeyboardVisible();
+
+        if (keyboardVisible && !overlayAdded) {
+            windowManager.addView(overlayView, layoutParams);
+            overlayAdded = true;
+        } else if (!keyboardVisible && overlayAdded) {
+            windowManager.removeView(overlayView);
+            overlayAdded = false;
+        }
+    }
+
+    private boolean isKeyboardVisible() {
+        List<AccessibilityWindowInfo> windows = getWindows();
+        if (windows == null) return false;
+        for (AccessibilityWindowInfo window : windows) {
+            if (window.getType() == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void loadSavedPosition() {
+        SharedPreferences prefs = getSharedPreferences("spellswitch_prefs", MODE_PRIVATE);
+        layoutParams.x = prefs.getInt("overlay_x", 40);
+        layoutParams.y = prefs.getInt("overlay_y", 200);
+    }
+
+    private void savePosition() {
+        getSharedPreferences("spellswitch_prefs", MODE_PRIVATE)
+                .edit()
+                .putInt("overlay_x", layoutParams.x)
+                .putInt("overlay_y", layoutParams.y)
+                .apply();
     }
 
     private boolean onOverlayTouch(View v, MotionEvent event) {
@@ -107,7 +148,9 @@ public class OverlayAccessibilityService extends AccessibilityService {
 
             case MotionEvent.ACTION_UP: {
                 long heldMs = System.currentTimeMillis() - touchDownTime;
-                if (!isDragging) {
+                if (isDragging) {
+                    savePosition();
+                } else {
                     if (heldMs >= LONG_PRESS_MS) {
                         showLanguageMenu();
                     } else {
@@ -331,7 +374,7 @@ public class OverlayAccessibilityService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // Не используется: сервис существует только как хост для оверлея.
+        updateOverlayVisibility();
     }
 
     @Override
