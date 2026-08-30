@@ -31,12 +31,15 @@ public class OverlayAccessibilityService extends AccessibilityService {
     static final String PREFS_NAME = "spellswitch_prefs";
     static final String KEY_TAP_THROUGH = "tap_through_enabled";
     static final String KEY_ALPHA_PERCENT = "overlay_alpha_percent";
+    static final String KEY_HEIGHT_DP = "overlay_height_dp";
     static final String KEY_OVERLAY_X = "overlay_x";
     static final String KEY_OVERLAY_Y = "overlay_y";
+    static final String KEY_SHOW_FLAG = "show_flag";
 
     private static final int LONG_PRESS_MS = 500;
     private static final int DRAG_SLOP_PX = 12;
     private static final int DEFAULT_ALPHA_PERCENT = 80;
+    private static final int DEFAULT_HEIGHT_DP = 48;
 
     private WindowManager windowManager;
     private TextView overlayView;
@@ -64,16 +67,17 @@ public class OverlayAccessibilityService extends AccessibilityService {
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
 
         overlayView = new TextView(this);
-        overlayView.setText(SpellCheckerSwitcher.currentLanguageLabel(this));
+        overlayView.setText(SpellCheckerSwitcher.currentDisplayText(this));
         overlayView.setTextColor(Color.WHITE);
         overlayView.setBackgroundColor(Color.parseColor("#1565C0"));
-        overlayView.setPadding(28, 20, 28, 20);
+        overlayView.setGravity(Gravity.CENTER);
+        overlayView.setPadding(28, 0, 28, 0);
         overlayView.setTextSize(14);
         applyAlpha();
 
         layoutParams = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
+                dpToPx(getHeightDp()),
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
@@ -89,6 +93,10 @@ public class OverlayAccessibilityService extends AccessibilityService {
         prefsListener = (sp, key) -> {
             if (KEY_ALPHA_PERCENT.equals(key)) {
                 applyAlpha();
+            } else if (KEY_HEIGHT_DP.equals(key)) {
+                applyHeight();
+            } else if (KEY_SHOW_FLAG.equals(key)) {
+                overlayView.setText(SpellCheckerSwitcher.currentDisplayText(this));
             }
         };
         prefs.registerOnSharedPreferenceChangeListener(prefsListener);
@@ -98,6 +106,22 @@ public class OverlayAccessibilityService extends AccessibilityService {
         int percent = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getInt(KEY_ALPHA_PERCENT, DEFAULT_ALPHA_PERCENT);
         overlayView.setAlpha(percent / 100f);
+    }
+
+    private void applyHeight() {
+        layoutParams.height = dpToPx(getHeightDp());
+        if (overlayAdded) {
+            windowManager.updateViewLayout(overlayView, layoutParams);
+        }
+    }
+
+    private int getHeightDp() {
+        return getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getInt(KEY_HEIGHT_DP, DEFAULT_HEIGHT_DP);
+    }
+
+    private int dpToPx(int dp) {
+        return Math.round(dp * getResources().getDisplayMetrics().density);
     }
 
     /**
@@ -183,7 +207,7 @@ public class OverlayAccessibilityService extends AccessibilityService {
 
     private void cycleLanguage() {
         SpellCheckerSwitcher.cycleNext(this);
-        overlayView.setText(SpellCheckerSwitcher.currentLanguageLabel(this));
+        overlayView.setText(SpellCheckerSwitcher.currentDisplayText(this));
 
         if (isTapThroughEnabled()) {
             dispatchTapThrough();
@@ -256,7 +280,7 @@ public class OverlayAccessibilityService extends AccessibilityService {
                 .setItems(items, (d, which) -> {
                     if (which < order.length) {
                         SpellCheckerSwitcher.setLanguage(this, order[which]);
-                        overlayView.setText(SpellCheckerSwitcher.currentLanguageLabel(this));
+                        overlayView.setText(SpellCheckerSwitcher.currentDisplayText(this));
                     } else {
                         setTapThroughEnabled(!tapThroughOn);
                     }

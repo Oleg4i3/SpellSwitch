@@ -12,6 +12,7 @@ import android.text.TextUtils;
 import android.view.DragEvent;
 import android.view.View;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
@@ -21,6 +22,7 @@ public class MainActivity extends Activity {
 
     private TextView statusView;
     private TextView alphaLabel;
+    private TextView heightLabel;
     private LinearLayout orderContainer;
     private int density;
 
@@ -47,6 +49,12 @@ public class MainActivity extends Activity {
 
         addSpacer(root, pad);
         addAlphaSection(root, pad);
+
+        addSpacer(root, pad);
+        addHeightSection(root, pad);
+
+        addSpacer(root, pad);
+        addFlagCheckbox(root, pad);
 
         addSpacer(root, pad);
         addOrderSection(root, pad);
@@ -94,6 +102,57 @@ public class MainActivity extends Activity {
             }
         });
         parent.addView(seekBar);
+    }
+
+    private void addHeightSection(LinearLayout parent, int pad) {
+        SharedPreferences prefs = getSharedPreferences(
+                OverlayAccessibilityService.PREFS_NAME, MODE_PRIVATE);
+        int currentHeight = prefs.getInt(OverlayAccessibilityService.KEY_HEIGHT_DP, 48);
+
+        heightLabel = new TextView(this);
+        heightLabel.setText("Высота ярлыка: " + currentHeight + " dp");
+        parent.addView(heightLabel);
+
+        SeekBar seekBar = new SeekBar(this);
+        seekBar.setMax(150);
+        seekBar.setProgress(currentHeight);
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
+                if (!fromUser) return;
+                int clamped = Math.max(24, progress); // меньше — по ярлыку не попасть пальцем
+                heightLabel.setText("Высота ярлыка: " + clamped + " dp");
+                getSharedPreferences(OverlayAccessibilityService.PREFS_NAME, MODE_PRIVATE)
+                        .edit()
+                        .putInt(OverlayAccessibilityService.KEY_HEIGHT_DP, clamped)
+                        .apply();
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar sb) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar sb) {
+            }
+        });
+        parent.addView(seekBar);
+    }
+
+    private void addFlagCheckbox(LinearLayout parent, int pad) {
+        SharedPreferences prefs = getSharedPreferences(
+                OverlayAccessibilityService.PREFS_NAME, MODE_PRIVATE);
+        boolean showFlag = prefs.getBoolean(OverlayAccessibilityService.KEY_SHOW_FLAG, false);
+
+        CheckBox checkBox = new CheckBox(this);
+        checkBox.setText("Показывать флаг вместо букв");
+        checkBox.setChecked(showFlag);
+        checkBox.setOnCheckedChangeListener((buttonView, isChecked) ->
+                getSharedPreferences(OverlayAccessibilityService.PREFS_NAME, MODE_PRIVATE)
+                        .edit()
+                        .putBoolean(OverlayAccessibilityService.KEY_SHOW_FLAG, isChecked)
+                        .apply());
+        parent.addView(checkBox);
     }
 
     private void addOrderSection(LinearLayout parent, int pad) {

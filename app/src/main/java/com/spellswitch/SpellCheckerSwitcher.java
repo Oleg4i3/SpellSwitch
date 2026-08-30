@@ -26,15 +26,26 @@ public class SpellCheckerSwitcher {
     private static final String[] ALL_CODES = {"ru", "uk", "en"};
     private static final String[] ALL_LABELS = {"RU", "UK", "EN"};
     private static final String[] ALL_MENU_NAMES = {"Русский", "Українська", "English"};
+    private static final String[] ALL_FLAGS = {
+            "\uD83C\uDDF7\uD83C\uDDFA", // 🇷🇺
+            "\uD83C\uDDFA\uD83C\uDDE6", // 🇺🇦
+            "\uD83C\uDDEC\uD83C\uDDE7"  // 🇬🇧
+    };
 
     private static final String PREFS_NAME = "spellswitch_prefs";
     private static final String KEY_LANG_INDEX = "current_lang_index";
     private static final String KEY_LANG_ORDER = "lang_order";
+    private static final String KEY_SHOW_FLAG = "show_flag";
     private static final String DEFAULT_ORDER = "ru,uk,en";
 
     public static String labelFor(String code) {
         int i = indexInAll(code);
         return i >= 0 ? ALL_LABELS[i] : code.toUpperCase();
+    }
+
+    public static String flagFor(String code) {
+        int i = indexInAll(code);
+        return i >= 0 ? ALL_FLAGS[i] : code;
     }
 
     public static String menuNameFor(String code) {
@@ -59,9 +70,20 @@ public class SpellCheckerSwitcher {
     }
 
     public static String currentLanguageLabel(Context context) {
+        return labelFor(currentCode(context));
+    }
+
+    /** Текст для оверлея — флаг или буквенная метка, в зависимости от настройки. */
+    public static String currentDisplayText(Context context) {
+        boolean showFlag = prefs(context).getBoolean(KEY_SHOW_FLAG, false);
+        String code = currentCode(context);
+        return showFlag ? flagFor(code) : labelFor(code);
+    }
+
+    private static String currentCode(Context context) {
         String[] order = getOrder(context);
         int idx = currentIndex(context) % order.length;
-        return labelFor(order[idx]);
+        return order[idx];
     }
 
     public static void cycleNext(Context context) {
