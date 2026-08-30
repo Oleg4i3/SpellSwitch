@@ -2,10 +2,12 @@ package com.spellswitch;
 
 import android.app.Activity;
 import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -17,6 +19,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 public class MainActivity extends Activity {
 
@@ -48,6 +51,9 @@ public class MainActivity extends Activity {
         root.addView(openAccessibilityBtn);
 
         addSpacer(root, pad);
+        addAdbInstructionsSection(root, pad);
+
+        addSpacer(root, pad);
         addAlphaSection(root, pad);
 
         addSpacer(root, pad);
@@ -67,6 +73,65 @@ public class MainActivity extends Activity {
     private void addSpacer(LinearLayout parent, int height) {
         View spacer = new View(this);
         parent.addView(spacer, LinearLayout.LayoutParams.MATCH_PARENT, height);
+    }
+
+    private void addAdbInstructionsSection(LinearLayout parent, int pad) {
+        TextView title = new TextView(this);
+        title.setText("Как выдать разрешение (один раз, через ADB на компьютере)");
+        title.setTextSize(17);
+        title.setTypeface(null, Typeface.BOLD);
+        title.setPadding(0, 0, 0, pad / 2);
+        parent.addView(title);
+
+        String instructions =
+                "1. На телефоне: Настройки → О телефоне → 7 раз тапнуть по номеру сборки "
+                        + "(появится \"Вы стали разработчиком\") → Настройки → Для разработчиков "
+                        + "→ включить \"Отладка по USB\".\n\n"
+                        + "2. На компьютере: скачать SDK Platform-Tools "
+                        + "(developer.android.com/tools/releases/platform-tools) и распаковать "
+                        + "архив в любую папку — устанавливать ничего не нужно, там просто adb.exe.\n\n"
+                        + "3. Подключить телефон к компьютеру USB-кабелем с передачей данных. "
+                        + "На экране телефона появится запрос \"Разрешить отладку по USB с этого "
+                        + "компьютера?\" — подтвердить.\n\n"
+                        + "4. Открыть командную строку в папке с adb и проверить связь:\n"
+                        + "    adb devices\n"
+                        + "Должно появиться устройство со статусом \"device\" "
+                        + "(если \"unauthorized\" — попап на телефоне ещё не подтверждён).\n\n"
+                        + "5. Выполнить команду ниже — кнопка скопирует её в буфер обмена:";
+
+        TextView body = new TextView(this);
+        body.setText(instructions);
+        body.setTextIsSelectable(true);
+        body.setPadding(0, 0, 0, pad / 2);
+        parent.addView(body);
+
+        String command = "adb shell pm grant com.spellswitch"
+                + " android.permission.WRITE_SECURE_SETTINGS";
+
+        TextView commandView = new TextView(this);
+        commandView.setText(command);
+        commandView.setTypeface(Typeface.MONOSPACE);
+        commandView.setTextIsSelectable(true);
+        commandView.setBackgroundColor(Color.parseColor("#EEEEEE"));
+        commandView.setPadding(16 * density, 16 * density, 16 * density, 16 * density);
+        parent.addView(commandView);
+
+        Button copyBtn = new Button(this);
+        copyBtn.setText("Скопировать команду");
+        copyBtn.setOnClickListener(v -> {
+            ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (cm != null) {
+                cm.setPrimaryClip(ClipData.newPlainText("adb command", command));
+                Toast.makeText(this, "Скопировано", Toast.LENGTH_SHORT).show();
+            }
+        });
+        parent.addView(copyBtn);
+
+        TextView note = new TextView(this);
+        note.setText("После выполнения команды вернитесь на этот экран — статус выше "
+                + "должен смениться на \"выдано\" (может понадобиться заново открыть приложение).");
+        note.setPadding(0, pad / 2, 0, 0);
+        parent.addView(note);
     }
 
     private void addAlphaSection(LinearLayout parent, int pad) {
